@@ -5,17 +5,24 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-function parseMessage(text) {
-  const tokens = text.trim().split(/\s+/);
+// parse theo /score
+function parseScoreCommand(text) {
+  const clean = text.replace("/score", "").trim();
+  const tokens = clean.split(/\s+/);
 
   let users = [];
   let point = null;
   let note = [];
 
   for (let t of tokens) {
-    if (t.startsWith("@")) users.push(t.replace("@", ""));
-    else if (/^[+-]?\d+$/.test(t)) point = parseInt(t);
-    else note.push(t);
+    if (/^[+-]?\d+$/.test(t)) {
+      point = parseInt(t);
+    } else if (point === null) {
+      // trước khi gặp point → là username
+      users.push(t.toLowerCase());
+    } else {
+      note.push(t);
+    }
   }
 
   return { users, point, note: note.join(" ") };
@@ -24,7 +31,7 @@ function parseMessage(text) {
 async function sendMessage(chatId, text) {
   await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text })
   });
 }
@@ -37,12 +44,17 @@ export default async function handler(req, res) {
     if (!msg?.text) return res.status(200).send("no message");
 
     const chatId = msg.chat.id;
-    const text = msg.text;
+    const text = msg.text.trim();
 
-    const { users, point, note } = parseMessage(text);
+    // 👉 chỉ xử lý /score
+    if (!text.startsWith("/score")) {
+      return res.status(200).send("ignore");
+    }
+
+    const { users, point, note } = parseScoreCommand(text);
 
     if (!users.length || point === null) {
-      await sendMessage(chatId, "❌ Sai cú pháp: @tien -5 đi trễ");
+      await sendMessage(chatId, "❌ Sai cú pháp: /score tien -5 đi trễ");
       return res.status(200).send("invalid");
     }
 
@@ -56,16 +68,18 @@ export default async function handler(req, res) {
         .single();
 
       if (error || !user) {
-        results.push(`❌ Không có @${username}`);
+        results.push(`❌ Không có ${username}`);
         continue;
       }
 
+      // insert log
       await supabase.from("staff_score_logs").insert({
         user_id: user.id,
         point,
         note
       });
 
+      // tính tổng (tạm thời)
       const { data: logs } = await supabase
         .from("staff_score_logs")
         .select("point")
