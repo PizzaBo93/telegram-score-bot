@@ -1,4 +1,9 @@
-import { supabase } from "../lib/supabase";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
 
 function parseMessage(text) {
   const tokens = text.trim().split(/\s+/);
@@ -8,74 +13,59 @@ function parseMessage(text) {
   let note = [];
 
   for (let t of tokens) {
-    if (t.startsWith("@")) {
-      users.push(t.replace("@", ""));
-    } else if (/^[+-]?\d+$/.test(t)) {
-      point = parseInt(t);
-    } else {
-      note.push(t);
-    }
+    if (t.startsWith("@")) users.push(t.replace("@", ""));
+    else if (/^[+-]?\d+$/.test(t)) point = parseInt(t);
+    else note.push(t);
   }
 
-  return {
-    users,
-    point,
-    note: note.join(" ")
-  };
+  return { users, point, note: note.join(" ") };
 }
 
 async function sendMessage(chatId, text) {
   await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text
-    })
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ chat_id: chatId, text })
   });
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(200).send("ok");
-
-  const msg = req.body.message;
-  if (!msg || !msg.text) return res.status(200).send("no message");
-
-  const chatId = msg.chat.id;
-  const text = msg.text;
-
-  if (!text.includes("@")) return res.status(200).send("ignore");
-
   try {
+    if (req.method !== "POST") return res.status(200).send("ok");
+
+    const msg = req.body?.message;
+    if (!msg?.text) return res.status(200).send("no message");
+
+    const chatId = msg.chat.id;
+    const text = msg.text;
+
     const { users, point, note } = parseMessage(text);
 
     if (!users.length || point === null) {
-      await sendMessage(chatId, "❌ Sai cú pháp. Ví dụ: @tien -5 đi trễ");
+      await sendMessage(chatId, "❌ Sai cú pháp: @tien -5 đi trễ");
       return res.status(200).send("invalid");
     }
 
     let results = [];
 
     for (let username of users) {
-      const { data: user } = await supabase
+      const { data: user, error } = await supabase
         .from("users")
         .select("*")
         .eq("username", username)
         .single();
 
-      if (!user) {
+      if (error || !user) {
         results.push(`❌ Không có @${username}`);
         continue;
       }
 
-      // insert log
       await supabase.from("staff_score_logs").insert({
         user_id: user.id,
         point,
         note
       });
 
-      // tính tổng điểm
       const { data: logs } = await supabase
         .from("staff_score_logs")
         .select("point")
@@ -90,10 +80,10 @@ export default async function handler(req, res) {
 
     await sendMessage(chatId, results.join("\n"));
 
-    res.status(200).send("ok");
+    return res.status(200).send("ok");
+
   } catch (err) {
-    console.error(err);
-    await sendMessage(chatId, "❌ Lỗi hệ thống");
-    res.status(200).send("error");
+    console.error("ERROR:", err);
+    return res.status(500).send("error");
   }
 }
