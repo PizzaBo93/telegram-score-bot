@@ -1,31 +1,27 @@
 import { supabase } from "../lib/supabase";
 
-const RULE_ALIAS = {
-  DT: "DI_TRE",
-  BC: "BANH_CHAY",
-  KK: "KHACH_KHEN",
-  VS: "VS_KHONG_SACH"
-};
-
 function parseMessage(text) {
-  const [main, notePart] = text.split("|");
-  const note = notePart?.trim();
-
-  const tokens = main.trim().split(/\s+/);
+  const tokens = text.trim().split(/\s+/);
 
   let users = [];
-  let action = null;
-  let ruleCode = null;
-  let overridePoint = null;
+  let point = null;
+  let note = [];
 
   for (let t of tokens) {
-    if (t.startsWith("@")) users.push(t.replace("@", ""));
-    else if (t === "+" || t === "-") action = t;
-    else if (/^[+-]?\d+$/.test(t)) overridePoint = parseInt(t);
-    else ruleCode = RULE_ALIAS[t] || t;
+    if (t.startsWith("@")) {
+      users.push(t.replace("@", ""));
+    } else if (/^[+-]?\d+$/.test(t)) {
+      point = parseInt(t);
+    } else {
+      note.push(t);
+    }
   }
 
-  return { users, action, ruleCode, overridePoint, note };
+  return {
+    users,
+    point,
+    note: note.join(" ")
+  };
 }
 
 async function sendMessage(chatId, text) {
@@ -51,19 +47,11 @@ export default async function handler(req, res) {
   if (!text.includes("@")) return res.status(200).send("ignore");
 
   try {
-    const { users, action, ruleCode, overridePoint, note } = parseMessage(text);
+    const { users, point, note } = parseMessage(text);
 
-    if (!users.length || !ruleCode) return res.status(200).send("invalid");
-
-    const { data: rule } = await supabase
-      .from("score_rules")
-      .select("*")
-      .eq("code", ruleCode)
-      .single();
-
-    if (!rule) {
-      await sendMessage(chatId, `❌ Không tìm thấy lỗi: ${ruleCode}`);
-      return res.status(200).send("ok");
+    if (!users.length || point === null) {
+      await sendMessage(chatId, "❌ Sai cú pháp. Ví dụ: @tien -5 đi trễ");
+      return res.status(200).send("invalid");
     }
 
     let results = [];
@@ -80,18 +68,14 @@ export default async function handler(req, res) {
         continue;
       }
 
-      let point = overridePoint ?? rule.default_point;
-
-      if (action === "-" && point > 0) point = -point;
-      if (action === "+" && point < 0) point = Math.abs(point);
-
+      // insert log
       await supabase.from("staff_score_logs").insert({
         user_id: user.id,
-        rule_id: rule.id,
         point,
         note
       });
 
+      // tính tổng điểm
       const { data: logs } = await supabase
         .from("staff_score_logs")
         .select("point")
@@ -100,7 +84,7 @@ export default async function handler(req, res) {
       const total = 100 + logs.reduce((a, b) => a + b.point, 0);
 
       results.push(
-        `✅ ${user.display_name} ${point > 0 ? "+" : ""}${point} → ${total} điểm`
+        `✅ ${user.display_name}: ${point > 0 ? "+" : ""}${point} → ${total} điểm`
       );
     }
 
@@ -109,7 +93,7 @@ export default async function handler(req, res) {
     res.status(200).send("ok");
   } catch (err) {
     console.error(err);
-    await sendMessage(chatId, "❌ Lỗi xử lý");
+    await sendMessage(chatId, "❌ Lỗi hệ thống");
     res.status(200).send("error");
   }
 }
