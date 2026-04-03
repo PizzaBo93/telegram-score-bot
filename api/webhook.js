@@ -5,7 +5,6 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// parse theo /score
 function parseScoreCommand(text) {
   const clean = text.replace("/score", "").trim();
   const tokens = clean.split(/\s+/);
@@ -15,12 +14,16 @@ function parseScoreCommand(text) {
   let note = [];
 
   for (let t of tokens) {
+    // 👉 detect point
     if (/^[+-]?\d+$/.test(t)) {
       point = parseInt(t);
-    } else if (point === null) {
-      // trước khi gặp point → là username
-      users.push(t.toLowerCase());
-    } else {
+    }
+    // 👉 trước khi gặp point = username
+    else if (point === null) {
+      users.push(t.replace("@", "").toLowerCase());
+    }
+    // 👉 sau point = note
+    else {
       note.push(t);
     }
   }
@@ -61,6 +64,7 @@ export default async function handler(req, res) {
     let results = [];
 
     for (let username of users) {
+      // 👉 tìm user theo username DB
       const { data: user, error } = await supabase
         .from("users")
         .select("*")
@@ -72,14 +76,14 @@ export default async function handler(req, res) {
         continue;
       }
 
-      // insert log
+      // 👉 insert log
       await supabase.from("staff_score_logs").insert({
         user_id: user.id,
         point,
         note
       });
 
-      // tính tổng (tạm thời)
+      // 👉 tính tổng (version đơn giản)
       const { data: logs } = await supabase
         .from("staff_score_logs")
         .select("point")
