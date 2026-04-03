@@ -5,32 +5,36 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
+// ✅ Parse command /score
 function parseScoreCommand(text) {
   const clean = text.replace("/score", "").trim();
   const tokens = clean.split(/\s+/);
 
   let users = [];
   let point = null;
-  let note = [];
+  let note = "";
 
-  for (let t of tokens) {
-    // 👉 detect point
-    if (/^[+-]?\d+$/.test(t)) {
-      point = parseInt(t);
-    }
-    // 👉 trước khi gặp point = username
-    else if (point === null) {
-      users.push(t.replace("@", "").toLowerCase());
-    }
-    // 👉 sau point = note
-    else {
-      note.push(t);
-    }
+  // 👉 tìm vị trí điểm
+  const pointIndex = tokens.findIndex(t => /^[+-]?\d+$/.test(t));
+
+  if (pointIndex === -1) {
+    return { users: [], point: null, note: "" };
   }
 
-  return { users, point, note: note.join(" ") };
+  point = parseInt(tokens[pointIndex]);
+
+  // 👉 user = trước điểm
+  users = tokens
+    .slice(0, pointIndex)
+    .map(t => t.replace("@", "").toLowerCase());
+
+  // 👉 note = sau điểm
+  note = tokens.slice(pointIndex + 1).join(" ");
+
+  return { users, point, note };
 }
 
+// ✅ gửi message Telegram
 async function sendMessage(chatId, text) {
   await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
     method: "POST",
@@ -64,11 +68,11 @@ export default async function handler(req, res) {
     let results = [];
 
     for (let username of users) {
-      // 👉 tìm user theo username DB
+      // 👉 tìm user (không phân biệt hoa thường)
       const { data: user, error } = await supabase
         .from("users")
         .select("*")
-        .eq("username", username)
+        .ilike("username", username)
         .single();
 
       if (error || !user) {
@@ -83,13 +87,13 @@ export default async function handler(req, res) {
         note
       });
 
-      // 👉 tính tổng (version đơn giản)
+      // 👉 tính tổng (basic version)
       const { data: logs } = await supabase
         .from("staff_score_logs")
         .select("point")
         .eq("user_id", user.id);
 
-      const total = 100 + logs.reduce((a, b) => a + b.point, 0);
+      const total = 100 + (logs?.reduce((a, b) => a + b.point, 0) || 0);
 
       results.push(
         `✅ ${user.display_name}: ${point > 0 ? "+" : ""}${point} → ${total} điểm`
